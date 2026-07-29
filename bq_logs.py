@@ -66,13 +66,6 @@ def download_file(filename: str, itinerary: str, date: str, trip_id: str, dest: 
     (dest / txt_name).write_bytes(data)
 
 
-def classify(filename: str) -> str:
-    if "-req.gz" in filename:
-        return "req"
-    if "-res.gz" in filename:
-        return "res"
-    return "other"
-
 
 def parse_args(argv):
     args = argv[1:]
@@ -112,55 +105,58 @@ def main():
     # only entries whose url is https
     all_calls = payload["air_api_call"]
     https_calls = [c for c in all_calls if c.get("url", "").startswith("https")]
-    files = []
-    for c in https_calls:
-        if c.get("req"):
-            files.append(c["req"])
-        if c.get("res"):
-            files.append(c["res"])
-    files = list(dict.fromkeys(files))  # deduplicate, preserve order
 
-    print(f"  Itinerary : {itinerary}")
-    print(f"  Trip      : {trip_id or '(none)'}")
-    print(f"  Date      : {date}")
-    print(f"  HTTPS calls : {len(https_calls)}  →  {len(files)} files")
+    # build task list: (filename, api_name)
+    tasks = []
+    seen = set()
+    for c in https_calls:
+        api_name = c.get("api") or c.get("api_type") or "UNKNOWN"
+        # sanitize folder name
+        api_name = api_name.replace("/", "_").replace(" ", "_")
+        for key in ("req", "res"):
+            fname = c.get(key)
+            if fname and fname not in seen:
+                seen.add(fname)
+                tasks.append((fname, api_name))
+
+    print(f"  Itinerary   : {itinerary}")
+    print(f"  Trip        : {trip_id or '(none)'}")
+    print(f"  Date        : {date}")
+    print(f"  HTTPS calls : {len(https_calls)}  →  {len(tasks)} files")
     print()
 
     out = Path(__file__).parent / f"logs_{itinerary}"
-    for sub in ("req", "res"):
-        (out / sub).mkdir(parents=True, exist_ok=True)
+    out.mkdir(parents=True, exist_ok=True)
 
     errors = []
     done = 0
-    total = len(files)
+    total = len(tasks)
 
-    def worker(filename):
-        cat = classify(filename)
-        dest = out / cat
+    def worker(task):
+        filename, api_name = task
+        dest = out / api_name
         dest.mkdir(parents=True, exist_ok=True)
         try:
             download_file(filename, itinerary, date, trip_id, dest)
-            return filename, cat, None
+            return filename, api_name, None
         except Exception as e:
-            return filename, cat, str(e)
+            return filename, api_name, str(e)
 
     with ThreadPoolExecutor(max_workers=workers) as pool:
-        futures = {pool.submit(worker, f): f for f in files}
+        futures = {pool.submit(worker, t): t for t in tasks}
         for future in as_completed(futures):
-            filename, cat, err = future.result()
+            filename, api_name, err = future.result()
             done += 1
             label = "OK " if err is None else "ERR"
-            short = filename[:65]
-            print(f"  [{done:3d}/{total}] [{label}] [{cat:5s}] {short}")
+            print(f"  [{done:3d}/{total}] [{label}] [{api_name}] {filename[:55]}")
             if err:
                 errors.append((filename, err))
 
-    req_count = sum(1 for _ in (out / "req").iterdir())
-    res_count = sum(1 for _ in (out / "res").iterdir())
-
+    api_folders = [d for d in out.iterdir() if d.is_dir()]
     print(f"\nSaved to: {out.resolve()}")
-    print(f"  req/ — {req_count} files")
-    print(f"  res/ — {res_count} files")
+    for folder in sorted(api_folders):
+        count = sum(1 for _ in folder.iterdir())
+        print(f"  {folder.name}/ — {count} files")
 
     if errors:
         print(f"\n{len(errors)} error(s):")
