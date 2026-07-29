@@ -102,16 +102,25 @@ def main():
     itinerary = header["itinerary"][0]
     trip_id = (header.get("trip") or [""])[0]
     date = payload["air_api_call"][0]["time"].split(" ")[0]
-    files = payload["files_list"][0]["files"]
+
+    # only entries whose url is https
+    https_calls = [c for c in payload["air_api_call"] if c.get("url", "").startswith("https")]
+    files = []
+    for c in https_calls:
+        if c.get("req"):
+            files.append(c["req"])
+        if c.get("res"):
+            files.append(c["res"])
+    files = list(dict.fromkeys(files))  # deduplicate, preserve order
 
     print(f"  Itinerary : {itinerary}")
     print(f"  Trip      : {trip_id or '(none)'}")
     print(f"  Date      : {date}")
-    print(f"  Files     : {len(files)}")
+    print(f"  HTTPS calls : {len(https_calls)}  →  {len(files)} files")
     print()
 
-    out = Path(f"logs_{itinerary}")
-    for sub in ("req", "res", "other"):
+    out = Path.home() / "Logs" / f"logs_{itinerary}"
+    for sub in ("req", "res"):
         (out / sub).mkdir(parents=True, exist_ok=True)
 
     errors = []
@@ -120,8 +129,10 @@ def main():
 
     def worker(filename):
         cat = classify(filename)
+        dest = out / cat
+        dest.mkdir(parents=True, exist_ok=True)
         try:
-            download_file(filename, itinerary, date, trip_id, out / cat)
+            download_file(filename, itinerary, date, trip_id, dest)
             return filename, cat, None
         except Exception as e:
             return filename, cat, str(e)
@@ -139,12 +150,10 @@ def main():
 
     req_count = sum(1 for _ in (out / "req").iterdir())
     res_count = sum(1 for _ in (out / "res").iterdir())
-    other_count = sum(1 for _ in (out / "other").iterdir())
 
     print(f"\nSaved to: {out.resolve()}")
-    print(f"  req/   — {req_count} files")
-    print(f"  res/   — {res_count} files")
-    print(f"  other/ — {other_count} files")
+    print(f"  req/ — {req_count} files")
+    print(f"  res/ — {res_count} files")
 
     if errors:
         print(f"\n{len(errors)} error(s):")
