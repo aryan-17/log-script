@@ -11,6 +11,7 @@ Examples:
     python bq_logs.py NIX6de81811-697d-48a5-ab8d-260729143024 --zip --workers 20
 """
 import sys
+import gzip
 import json
 import shutil
 import urllib.request
@@ -57,7 +58,12 @@ def download_file(filename: str, itinerary: str, date: str, trip_id: str, dest: 
         "tripId": trip_id,
     })
     data = http_get(f"{BASE}/file?{params}")
-    (dest / filename).write_bytes(data)
+    try:
+        data = gzip.decompress(data)
+    except Exception:
+        pass  # not gzip, save as-is
+    txt_name = filename.replace(".gz", "") + ".txt"
+    (dest / txt_name).write_bytes(data)
 
 
 def classify(filename: str) -> str:
@@ -104,7 +110,8 @@ def main():
     date = payload["air_api_call"][0]["time"].split(" ")[0]
 
     # only entries whose url is https
-    https_calls = [c for c in payload["air_api_call"] if c.get("url", "").startswith("https")]
+    all_calls = payload["air_api_call"]
+    https_calls = [c for c in all_calls if c.get("url", "").startswith("https")]
     files = []
     for c in https_calls:
         if c.get("req"):
