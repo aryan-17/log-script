@@ -119,7 +119,7 @@ def main():
     print(f"  HTTPS calls : {len(https_calls)}  →  {len(files)} files")
     print()
 
-    out = Path.home() / "Logs" / f"logs_{itinerary}"
+    out = Path(__file__).parent / f"logs_{itinerary}"
     for sub in ("req", "res"):
         (out / sub).mkdir(parents=True, exist_ok=True)
 
